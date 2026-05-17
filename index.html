@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SENATE CRM — Воронка продаж</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="auth" id="authScreen">
+    <div class="auth__card">
+      <div class="auth__logo" aria-hidden="true">
+        <svg width="36" height="36" viewBox="0 0 28 28" fill="none">
+          <rect x="2" y="10" width="10" height="16" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="16" y="4" width="10" height="22" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M7 16h4M7 20h4M19 10h4M19 14h4M19 18h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h1 class="auth__title">SENATE CRM</h1>
+      <p class="auth__subtitle">Введите PIN-код для доступа к базе</p>
+      <form class="auth__form" id="authForm" novalidate>
+        <label class="auth__label" for="authPassword">PIN-код</label>
+        <input
+          type="password"
+          class="auth__input"
+          id="authPassword"
+          name="password"
+          placeholder="••••"
+          autocomplete="current-password"
+          inputmode="numeric"
+          required
+        >
+        <p class="auth__error" id="authError" role="alert" hidden>Неверный пароль</p>
+        <button type="submit" class="btn btn--primary auth__submit">Войти</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="appRoot" class="app-shell app-shell--hidden" hidden aria-hidden="true">
+  <div class="app">
+    <header class="header">
+      <div class="header__brand">
+        <div class="header__logo" aria-hidden="true">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect x="2" y="10" width="10" height="16" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+            <rect x="16" y="4" width="10" height="22" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M7 16h4M7 20h4M19 10h4M19 14h4M19 18h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="header__title">SENATE CRM</h1>
+          <p class="header__subtitle">Воронка продаж</p>
+        </div>
+      </div>
+      <div class="header__actions">
+        <button type="button" class="btn btn--logout" id="btnLogout" aria-label="Выйти из системы">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <path d="M7 2H3.5A1.5 1.5 0 002 3.5v11A1.5 1.5 0 003.5 16H7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M12 12l3-3-3-3M6 9h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Выйти
+        </button>
+        <button type="button" class="btn btn--export" id="btnExport">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <path d="M9 2v9M6 8l3 3 3-3" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3 14h12" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+          </svg>
+          Экспорт в Excel
+        </button>
+        <button type="button" class="btn btn--primary" id="btnAddClient">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <path d="M9 3v12M3 9h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Новый клиент
+        </button>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="dashboard" aria-label="Панель статистики">
+        <article class="metric-card metric-card--clients">
+          <div class="metric-card__icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M2 19c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M15 8h5M17.5 5.5V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="metric-card__body">
+            <p class="metric-card__label">Всего клиентов</p>
+            <p class="metric-card__value" id="metricTotal" aria-live="polite">0</p>
+          </div>
+        </article>
+
+        <article class="metric-card metric-card--potential">
+          <div class="metric-card__icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <path d="M3 17l4.5-6 3.5 4 5-7 3 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M3 5h16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="metric-card__body">
+            <p class="metric-card__label">Общий потенциал</p>
+            <p class="metric-card__value" id="metricPotential" aria-live="polite">$0</p>
+          </div>
+        </article>
+
+        <article class="metric-card metric-card--closed">
+          <div class="metric-card__icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <path d="M4 11l5 5L18 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+          </div>
+          <div class="metric-card__body">
+            <p class="metric-card__label">Закрытые сделки</p>
+            <p class="metric-card__value" id="metricClosed" aria-live="polite">0</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="toolbar" aria-label="Поиск и фильтрация">
+        <div class="toolbar__search">
+          <svg class="toolbar__search-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M12.5 12.5L16 16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <input
+            type="search"
+            class="toolbar__input"
+            id="searchInput"
+            placeholder="Поиск по имени или телефону..."
+            autocomplete="off"
+            aria-label="Поиск по имени или телефону"
+          >
+        </div>
+        <select class="toolbar__select" id="typeFilter" aria-label="Фильтр по типу недвижимости">
+          <option value="">Все типы</option>
+          <option value="Квартира">Квартира</option>
+          <option value="Дом">Дом</option>
+          <option value="Земля">Земля</option>
+          <option value="Готовый бизнес">Готовый бизнес</option>
+        </select>
+      </section>
+
+      <div class="kanban-scroll" data-kanban-scroll>
+        <main class="kanban" id="kanban" role="region" aria-label="Канбан-доска воронки продаж"></main>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="clientModal" hidden aria-hidden="true">
+    <div class="modal__backdrop" data-modal-close></div>
+    <div
+      class="modal__dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modalTitle"
+      aria-describedby="modalDesc"
+    >
+      <header class="modal__header">
+        <div>
+          <h2 class="modal__title" id="modalTitle">Новый лид</h2>
+          <p class="modal__desc" id="modalDesc">Заполните данные клиента для воронки продаж</p>
+        </div>
+        <button type="button" class="modal__close" data-modal-close aria-label="Закрыть">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </header>
+
+      <form class="modal__form" id="clientForm" novalidate>
+        <div class="form-field">
+          <label class="form-label" for="clientName">Имя клиента <span class="form-required">*</span></label>
+          <input
+            type="text"
+            class="form-input"
+            id="clientName"
+            name="name"
+            placeholder="Иванов Алексей"
+            autocomplete="name"
+            required
+          >
+          <span class="form-error" id="nameError" role="alert"></span>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label" for="clientPhone">Телефон</label>
+          <input
+            type="tel"
+            class="form-input"
+            id="clientPhone"
+            name="phone"
+            placeholder="+7 (999) 000-00-00"
+            autocomplete="tel"
+          >
+        </div>
+
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label" for="clientBudget">Бюджет ($)</label>
+            <div class="form-input-wrap">
+              <span class="form-input-prefix" aria-hidden="true">$</span>
+              <input
+                type="text"
+                class="form-input form-input--prefixed"
+                id="clientBudget"
+                name="budget"
+                placeholder="250 000"
+                inputmode="decimal"
+              >
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label class="form-label" for="clientType">Тип недвижимости</label>
+            <select class="form-select" id="clientType" name="propertyType">
+              <option value="Квартира">Квартира</option>
+              <option value="Дом">Дом</option>
+              <option value="Земля">Земля</option>
+              <option value="Готовый бизнес">Готовый бизнес</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label" for="clientContactDate">Дата следующего контакта</label>
+          <input
+            type="date"
+            class="form-input form-input--date"
+            id="clientContactDate"
+            name="nextContactDate"
+          >
+        </div>
+
+        <div class="form-field">
+          <label class="form-label" for="clientComment">Комментарии</label>
+          <textarea
+            class="form-textarea"
+            id="clientComment"
+            name="comments"
+            rows="3"
+            placeholder="Пожелания клиента, сроки, район..."
+          ></textarea>
+        </div>
+
+        <footer class="modal__footer">
+          <button type="button" class="btn btn--ghost" data-modal-close>Отмена</button>
+          <button type="submit" class="btn btn--primary" id="modalSubmitBtn">Сохранить</button>
+        </footer>
+      </form>
+    </div>
+  </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
