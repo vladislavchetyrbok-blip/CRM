@@ -329,7 +329,8 @@ public class MacroAccessibilityService extends AccessibilityService {
             overlay.addView(overlayLabel);
             Button record=new Button(this);record.setText("●"); record.setOnClickListener(v->{
                 if(recording)stopAll();else beginRecord();
-            });overlay.addView(record,new LinearLayout.LayoutParams(85,85));
+            });int touchSize=(int)(getResources().getDisplayMetrics().density*46);
+            overlay.addView(record,new LinearLayout.LayoutParams(touchSize,touchSize));
             Button run=new Button(this);run.setText("▶");run.setOnClickListener(v->{
                 if(!playing)beginPlay();
             });overlay.addView(run,new LinearLayout.LayoutParams(touchSize,touchSize));
