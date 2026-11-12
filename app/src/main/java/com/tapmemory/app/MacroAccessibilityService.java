@@ -89,7 +89,7 @@ public class MacroAccessibilityService extends AccessibilityService {
     }
     public void beginRecord(){
         stopAll(); MacroStore.save(this,new JSONArray());
-        recording=true;lastRecorded=0;lastScroll=0;lastX=-1;lastY=-1;
+        beginAppendRecord();\n    }\n    public void beginAppendRecord(){\n        stopAll();\n        recording=true;lastRecorded=0;lastScroll=0;lastX=-1;lastY=-1;
         state="● Запись: перейдите в приложение и нажимайте элементы.";
         showOverlay();
     }
