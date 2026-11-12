@@ -30,6 +30,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayDeque;
 import java.util.Locale;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -42,7 +43,8 @@ public class MacroAccessibilityService extends AccessibilityService {
     private int generation=0,stepIndex=0,loop=0,limit=1,gapMs=1200,ipMode=0;
     private long lastEvent=0,lastScroll=0,lastActionStart=0;
     private int prevX=-100,prevY=-100;
-    private String targetPackage="",ipUrl="";
+    private String targetPackage="",ipUrl="",lastProxyIp="";
+    private final ExecutorService proxyExecutor=Executors.newSingleThreadExecutor();
     private JSONArray snapshot=new JSONArray();
     private WindowManager manager;
     private WindowManager.LayoutParams panelLayout;
@@ -62,7 +64,7 @@ public class MacroAccessibilityService extends AccessibilityService {
         if(manager!=null&&panel!=null){
             try{manager.removeView(panel);}catch(Exception ignored){}
         }
-        io.shutdownNow();instance=null;super.onDestroy();
+        io.shutdownNow();proxyExecutor.shutdownNow();instance=null;super.onDestroy();
     }
 
     private static String limited(CharSequence s){
@@ -144,6 +146,16 @@ public class MacroAccessibilityService extends AccessibilityService {
         try{gapMs=(int)Math.max(0,Math.min(600000,Double.parseDouble(gapValue.trim().replace(',','.'))*1000));}
         catch(Exception e){gapMs=1200;}
         ipMode=MacroStore.pref(this).getInt("mode",0);
+        if(ipMode==2){
+            try{
+                List<ProxyList.Endpoint> profiles=ProxyList.fromSettings(this);
+                if(profiles.isEmpty()){state="Нет SOCKS5 прокси.";updatePanel();return;}
+                if(ProxyVpnService.instance==null){
+                    state="Включите VPN через кнопку запуска в TapMemory.";updatePanel();return;
+                }
+            }catch(Exception e){state=e.getMessage();updatePanel();return;}
+        }
+        lastProxyIp="";
         ipUrl=MacroStore.pref(this).getString("url","");
         if(ipMode==1&&!ipUrl.startsWith("https://")){
             state="Для смены IP нужна HTTPS-команда роутера или провайдера.";updatePanel();return;
@@ -181,6 +193,7 @@ public class MacroAccessibilityService extends AccessibilityService {
         loop++;stepIndex=0;lastActionStart=0;
         state="Повтор "+loop+(limit==0?" / ∞":" / "+limit);updatePanel();
         if(ipMode==1)changeIpAndVerify();
+        else if(ipMode==2)rotateProxy();
         else handler.postDelayed(this::nextStep,250);
     }
     private void nextStep(){
@@ -348,6 +361,52 @@ public class MacroAccessibilityService extends AccessibilityService {
         }
         while(!queue.isEmpty())queue.removeFirst().recycle();
         return best;
+    }
+    private void rotateProxy(){
+        final List<ProxyList.Endpoint> profiles;
+        try{profiles=ProxyList.fromSettings(this);}
+        catch(Exception e){fail("Некорректные прокси: "+e.getMessage());return;}
+        if(profiles.isEmpty()){fail("Список прокси пуст");return;}
+        int selected=(loop-1)%profiles.size();
+        ProxyList.Endpoint ep=profiles.get(selected);
+        state="Подключаю SOCKS5 "+(selected+1)+"/"+profiles.size()+"…";
+        updatePanel();
+        boolean accepted=ProxyVpnService.switchProxy(ep,targetPackage);
+        if(!accepted){fail("VPN не запущен. Включите через главный экран.");return;}
+        final int epoch=generation;
+        waitProxy(ep,epoch,SystemClock.uptimeMillis()+16000);
+    }
+    private void waitProxy(ProxyList.Endpoint ep,int epoch,long deadline){
+        if(!playing||epoch!=generation)return;
+        if(SystemClock.uptimeMillis()>deadline){
+            fail("SOCKS5 не подключился: "+ProxyVpnService.status);return;
+        }
+        if(!ProxyVpnService.ready||!ep.toString().equals(ProxyVpnService.active)){
+            handler.postDelayed(()->waitProxy(ep,epoch,deadline),400);return;
+        }
+        state="Проверяю IP через SOCKS5…";updatePanel();
+        proxyExecutor.execute(()->{
+            String exit=ProxyProbe.exitIp(ep);
+            handler.post(()->{
+                if(!playing||epoch!=generation)return;
+                if(exit==null){
+                    fail("Прокси "+ep+" не прошёл проверку HTTPS. Подключение остановлено.");
+                    return;
+                }
+                if(profilesCount()>1&&exit.equals(lastProxyIp)){
+                    fail("Внешний IP не изменился при переключении прокси. Повтор остановлен.");
+                    return;
+                }
+                lastProxyIp=exit;
+                state="SOCKS5 активен. Внешний IP: "+exit;
+                updatePanel();
+                handler.postDelayed(this::nextStep,500);
+            });
+        });
+    }
+    private int profilesCount(){
+        try{return ProxyList.fromSettings(this).size();}
+        catch(Exception ignored){return 0;}
     }
     // The device stays associated with Wi-Fi. IP rotation requires a router/provider HTTPS API.
     private void changeIpAndVerify(){
