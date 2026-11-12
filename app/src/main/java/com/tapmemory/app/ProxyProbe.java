@@ -40,7 +40,7 @@ final class ProxyProbe {
             }
             if(addrlen>0)readAll(raw,new byte[addrlen+2]);
             else readAll(raw,new byte[2]);
-            try(SSLSocket ssl=(SSLSocket)SSLSocketFactory.getDefault()
+            try(SSLSocket ssl=(SSLSocket)((SSLSocketFactory)SSLSocketFactory.getDefault())
                 .createSocket(raw,remote,443,true)){
                 ssl.setSoTimeout(timeout);
                 SSLParameters params=ssl.getSSLParameters();
