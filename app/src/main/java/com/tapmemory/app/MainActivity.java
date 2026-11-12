@@ -10,6 +10,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.provider.Settings;
+import android.net.VpnService;
+import java.util.List;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
@@ -24,7 +26,8 @@ public class MainActivity extends Activity {
     private final Handler ui=new Handler(Looper.getMainLooper());
     private LinearLayout page,stepsView;
     private Spinner macroSpinner,ipSpinner;
-    private EditText repeats,gap,ipUrl;
+    private EditText repeats,gap,ipUrl,proxyList;
+    private static final int VPN_PERMISSION_REQUEST=2403;
     private TextView status,summary,target;
     private boolean loading=false;
     private final ArrayList<String> macroIds=new ArrayList<>();
@@ -87,15 +90,37 @@ public class MainActivity extends Activity {
         repeats=numberField("Повторений: 1, 2, 3… или 0 для бесконечно","1",false);
         gap=numberField("Пауза между повторами, секунды","1.2",true);
         header("IP без отключения Wi-Fi",17);
-        String[] modes={"Не менять IP","Через HTTPS API роутера или провайдера"};
+        String[] modes={"Не менять IP","Через HTTPS API роутера/провайдера","SOCKS5 · переключать прокси"};
         ipSpinner=new Spinner(this);ipSpinner.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,modes));
         page.addView(ipSpinner);
         ipUrl=numberField("HTTPS-адрес команды смены IP","",false);
         ipUrl.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
+        proxyList=new EditText(this);
+        proxyList.setHint("SOCKS5 — каждый адрес с новой строки, например:\n127.0.0.1:9050\nproxy.example.org:1080");
+        proxyList.setHintTextColor(0xffa1aec0);
+        proxyList.setTextColor(Color.WHITE);
+        proxyList.setGravity(Gravity.TOP|Gravity.START);
+        proxyList.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        proxyList.setMinLines(4);proxyList.setMaxLines(8);
+        page.addView(proxyList,new LinearLayout.LayoutParams(-1,dp(128)));
+        info("SOCKS5 без логина: один host:port в строке. Можно использовать бесплатный Orbot: режим Power User, порт 9050, строка 127.0.0.1:9050. Для автоматической смены адресов добавьте два и более рабочих прокси. Бесплатные публичные прокси нестабильны и могут быть небезопасны.");
+        button("＋ Добавить бесплатный Tor (Orbot)",()->{
+            String v=proxyList.getText().toString().trim();
+            if(!v.contains("127.0.0.1:9050"))
+                proxyList.setText(v.isEmpty()?"127.0.0.1:9050":v+"\n127.0.0.1:9050");
+        });
+        button("Проверить первый SOCKS5",this::testProxy);
+        button("Отключить прокси VPN",()->{
+            Intent intent=new Intent(this,ProxyVpnService.class);
+            intent.setAction(ProxyVpnService.DISCONNECT);
+            startService(intent);
+            toast("Отключаю прокси.");
+        });
         info("Работает с динамическим IP только если роутер/провайдер поддерживает команду переподключения WAN. Wi-Fi телефона не выключается. Перед каждым повтором проверяется, что публичный IP действительно изменился. Без API универсальная смена IP невозможна.");
         repeats.setText(MacroStore.pref(this).getString("repeats","1"));
         gap.setText(MacroStore.pref(this).getString("pause","1.2"));
         ipUrl.setText(MacroStore.pref(this).getString("url",""));
+        proxyList.setText(MacroStore.pref(this).getString("proxy_list",""));
         ipSpinner.setSelection(MacroStore.pref(this).getInt("mode",0));
         button("▶ Запустить сценарий",this::play);
         button("■ Остановить",()->{
@@ -120,7 +145,8 @@ public class MainActivity extends Activity {
             .putString("repeats",repeats.getText().toString())
             .putString("pause",gap.getText().toString())
             .putInt("mode",ipSpinner.getSelectedItemPosition())
-            .putString("url",ipUrl.getText().toString().trim()).apply();
+            .putString("url",ipUrl.getText().toString().trim())
+            .putString("proxy_list",proxyList.getText().toString()).apply();
     }
     private void reloadMacros(){
         if(macroSpinner==null)return;
@@ -166,16 +192,78 @@ public class MainActivity extends Activity {
         if(s==null){toast("Включите службу TapMemory в специальных возможностях.");return;}
         saveSettings();s.startRecording(clear);moveTaskToBack(true);
     }
+    private void testProxy(){
+        saveSettings();
+        List<ProxyList.Endpoint> entries;
+        try{entries=ProxyList.parse(proxyList.getText().toString());}
+        catch(Exception ex){toast(ex.getMessage());return;}
+        if(entries.isEmpty()){toast("Добавьте SOCKS5 адрес.");return;}
+        ProxyList.Endpoint first=entries.get(0);
+        toast("Проверяю SOCKS5 через HTTPS…");
+        new Thread(()->{
+            String ip=ProxyProbe.exitIp(first);
+            ui.post(()->toast(ip==null?"Нет подключения к "+first:
+                "Прокси работает. Внешний IP: "+ip));
+        },"ProxyTest").start();
+    }
     private void play(){
         MacroAccessibilityService s=MacroAccessibilityService.instance;
         if(s==null){toast("Включите службу TapMemory.");return;}
         if(MacroStore.steps(this).length()==0){toast("Нет записанных действий.");return;}
         saveSettings();
-        if(ipSpinner.getSelectedItemPosition()==1&&
-            !ipUrl.getText().toString().trim().startsWith("https://")){
-            toast("Нужен HTTPS-адрес API роутера или провайдера.");return;
+        int mode=ipSpinner.getSelectedItemPosition();
+        if(mode==1&&!ipUrl.getText().toString().trim().startsWith("https://")){
+            toast("Для смены IP нужен HTTPS-адрес API роутера или провайдера.");return;
         }
-        s.startPlayback();moveTaskToBack(true);
+        if(mode==2){
+            List<ProxyList.Endpoint> profiles;
+            try{profiles=ProxyList.parse(proxyList.getText().toString());}
+            catch(Exception e){toast(e.getMessage());return;}
+            if(profiles.isEmpty()){toast("Введите хотя бы один SOCKS5 прокси.");return;}
+            Intent request=VpnService.prepare(this);
+            if(request!=null){
+                startActivityForResult(request,VPN_PERMISSION_REQUEST);
+                return;
+            }
+            startVpnAndPlay(profiles.get(0));
+            return;
+        }
+        s.startPlayback();
+        moveTaskToBack(true);
+    }
+    private void startVpnAndPlay(ProxyList.Endpoint first){
+        String targetPackage=MacroStore.target(this);
+        if(targetPackage.isEmpty())targetPackage="com.android.chrome";
+        try{
+            ProxyVpnService.request(this,first,targetPackage);
+        }catch(Exception e){
+            toast("Не получилось включить VPN: "+e.getClass().getSimpleName());return;
+        }
+        Runnable begin=new Runnable(){
+            int attempts=0;
+            @Override public void run(){
+                MacroAccessibilityService service=MacroAccessibilityService.instance;
+                if(service==null){toast("Служба TapMemory отключилась.");return;}
+                if(ProxyVpnService.instance!=null){
+                    service.startPlayback();
+                    moveTaskToBack(true);
+                }else if(++attempts<30){
+                    ui.postDelayed(this,250);
+                }else{toast("Не удалось запустить VPN.");}
+            }
+        };
+        ui.postDelayed(begin,350);
+    }
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode==VPN_PERMISSION_REQUEST){
+            if(resultCode!=RESULT_OK){toast("Доступ VPN не разрешён.");return;}
+            try{
+                List<ProxyList.Endpoint> a=ProxyList.fromSettings(this);
+                if(a.isEmpty()){toast("Список прокси пуст.");return;}
+                startVpnAndPlay(a.get(0));
+            }catch(Exception e){toast("Ошибка прокси: "+e.getMessage());}
+        }
     }
     private void clipboardStep(){
         ClipboardManager clip=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
