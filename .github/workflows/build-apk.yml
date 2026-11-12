@@ -1,9 +1,9 @@
 name: Build TapMemory APK
 on:
   push:
-    branches: [ "tooling/tapmemory-v2-2" ]
+    branches: [ "tooling/tapmemory-v2-3" ]
     paths-ignore:
-      - "TapMemory-2.2.apk"
+      - "TapMemory-2.3.apk"
   workflow_dispatch:
 permissions:
   contents: write
@@ -22,18 +22,22 @@ jobs:
       - name: Install Android SDK platform
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" || true
+      - name: Prepare upstream tun2socks C library
+        run: |
+          git clone --depth=1 --recurse-submodules --shallow-submodules https://github.com/heiher/hev-socks5-tunnel.git app/src/main/jni/hev-socks5-tunnel
+          test -f app/src/main/jni/hev-socks5-tunnel/Android.mk
       - name: Build
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: TapMemory-2.2-apk
+          name: TapMemory-2.3-apk
           path: app/build/outputs/apk/debug/app-debug.apk
       - name: Publish installable APK
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk TapMemory-2.2.apk
+          cp app/build/outputs/apk/debug/app-debug.apk TapMemory-2.3.apk
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add TapMemory.apk
           git commit -m 'Publish TapMemory APK' || true
-          git push origin HEAD:tooling/tapmemory-v2-2
+          git push origin HEAD:tooling/tapmemory-v2-3
