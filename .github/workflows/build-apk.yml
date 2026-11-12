@@ -2,6 +2,8 @@ name: Build TapMemory APK
 on:
   push:
     branches: [ "tooling/tapmemory-v2-2" ]
+    paths-ignore:
+      - "TapMemory-2.2.apk"
   workflow_dispatch:
 permissions:
   contents: write
