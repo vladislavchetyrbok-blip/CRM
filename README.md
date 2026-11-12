@@ -1,10 +1,18 @@
-# TapMemory for Android
-Android auto-clicker using AccessibilityService. Records accessible UI clicks and scroll events, replays gestures, inserts clipboard text saved by the user, persists macro locally, and optionally attempts a mobile-network reconnect using the airplane mode quick setting before **each loop**. Can also send an HTTPS request to an IP-rotation API.
-## Install
-Download TapMemory.apk from this build branch and allow installation. Open app, enable the TapMemory service in Settings > Accessibility. On Android 13+ you may need to allow restricted settings under App info.
-## Usage
-1. Press Record. Perform actions in other apps. Stop with the floating panel.
-2. To add text: copy it, return to TapMemory, tap Add paste step (captures current clipboard). Tap the input field before that step.
-3. Set repetitions (0 unlimited) and optional IP change mode; tap Play. Floating Stop ends recording/playback.
-## Limitations and privacy
-No telemetry. All macro data stored locally, except optional HTTPS rotation command to user-configured URL. Accessibility clicks may miss web, game, canvas and non-accessible widgets; click recording uses UI element centers rather than physical touch positions. Pasted text may contain secrets; do not save passwords. Quick-settings automation may be unavailable on some OEMs or languages; airplane mode can disrupt connectivity and **does not guarantee a new public IP**. Works only on cellular when Wi-Fi is off. An HTTPS rotation API changes the device's public IP only if the configured VPN/proxy actually routes device traffic through it.
+# TapMemory 2.2 — Android
+
+Новая версия автокликера с Chrome-режимом. Проект создан на основе доступной ветки TapMemory 1.1 и требований, восстановленных из обсуждения Work 2.1; оригинальный исходный ZIP Work 2.1 отсутствовал.
+
+### Возможности
+- Доступность Android: запись нажатий и прокрутки без перехвата реальных касаний.
+- Сохраняемые именованные сценарии; редактирование задержек с точностью до 0.001 секунды.
+- Воспроизведение с поиском элементов по id / тексту / описанию и ожиданием появления до 12 секунд.
+- Повторы, паузы, компактная перемещаемая панель.
+- Вставка текста из пользовательского буфера обмена: сохраняется как отдельный шаг и применяется к активному редактируемому полю.
+- Смена внешнего IP без отключения телефона от Wi-Fi через пользовательский HTTPS API роутера / провайдера с верификацией по api.ipify.org перед каждым циклом.
+
+### Ограничения
+- В Android AccessibilityService недоступны *сырьевые* физические касания, Chrome WebView не гарантирует доступ к каждому DOM элементу. Если нет стабильного локатора, используется координатный шаг. Для Chrome точность зависит от содержимого accessibility tree.
+- Смена публичного IP доступна только при поддержке роутером или провайдером API и динамического IP, сама по себе команда не меняет IP телефона. WAN будет кратковременно переподключаться, хотя Wi-Fi соединение телефона остаётся.
+- Секреты в буфере лучше не сохранять. Все сценарии хранятся локально, без сервера. Команды ротации отправляются по URL пользователя, проверка IP — запрос к api.ipify.org.
+- Это подписанный отладочный APK для проверки, а не релиз из Play Store. Приложение использует отдельный package id `com.tapmemory.app.v22`, чтобы не переписывать предыдущую Work установку.
+- Сборка на GitHub Actions не доказывает совместимость с конкретным устройством. Желательна проверка на Chrome в Android 11.
