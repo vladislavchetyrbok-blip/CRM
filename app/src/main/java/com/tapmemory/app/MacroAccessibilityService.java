@@ -366,39 +366,56 @@ public class MacroAccessibilityService extends AccessibilityService {
         final List<ProxyList.Endpoint> profiles;
         try{profiles=ProxyList.fromSettings(this);}
         catch(Exception e){fail("Некорректные прокси: "+e.getMessage());return;}
-        if(profiles.isEmpty()){fail("Список прокси пуст");return;}
+        if(profiles.isEmpty()){fail("Список SOCKS5 пуст");return;}
         int selected=(loop-1)%profiles.size();
         ProxyList.Endpoint ep=profiles.get(selected);
-        state="Подключаю SOCKS5 "+(selected+1)+"/"+profiles.size()+"…";
-        updatePanel();
-        boolean accepted=ProxyVpnService.switchProxy(ep,targetPackage);
-        if(!accepted){fail("VPN не запущен. Включите через главный экран.");return;}
-        final int epoch=generation;
-        waitProxy(ep,epoch,SystemClock.uptimeMillis()+16000);
+        boolean tor=ep.host.equals("127.0.0.1")&&ep.port==9050;
+        String username=tor?"<torS0X>0":"";
+        String password=tor?("tm"+loop+"_"+SystemClock.uptimeMillis()):"";
+        startProxyConnection(ep,username,password,tor,0);
     }
-    private void waitProxy(ProxyList.Endpoint ep,int epoch,long deadline){
+    private void startProxyConnection(ProxyList.Endpoint ep,String user,String pass,
+                                      boolean tor,int attempt){
+        state=(tor?"Tor: новый маршрут":"Переключение SOCKS5")+
+            " · повтор "+loop+"…";
+        updatePanel();
+        if(!ProxyVpnService.switchProxy(ep,targetPackage,user,pass)){
+            fail("Не удалось переключить VPN. Запустите через главный экран.");
+            return;
+        }
+        final int epoch=generation;
+        waitProxy(ep,epoch,SystemClock.uptimeMillis()+20000,user,pass,tor,attempt);
+    }
+    private void waitProxy(ProxyList.Endpoint ep,int epoch,long deadline,
+                           String user,String pass,boolean tor,int attempt){
         if(!playing||epoch!=generation)return;
         if(SystemClock.uptimeMillis()>deadline){
             fail("SOCKS5 не подключился: "+ProxyVpnService.status);return;
         }
         if(!ProxyVpnService.ready||!ep.toString().equals(ProxyVpnService.active)){
-            handler.postDelayed(()->waitProxy(ep,epoch,deadline),400);return;
+            handler.postDelayed(()->waitProxy(ep,epoch,deadline,user,pass,tor,attempt),400);
+            return;
         }
-        state="Проверяю IP через SOCKS5…";updatePanel();
+        state="Проверяю внешний IP через SOCKS5…";updatePanel();
         proxyExecutor.execute(()->{
-            String exit=ProxyProbe.exitIp(ep);
+            String exit=ProxyProbe.exitIp(ep,user,pass);
             handler.post(()->{
                 if(!playing||epoch!=generation)return;
                 if(exit==null){
-                    fail("Прокси "+ep+" не прошёл проверку HTTPS. Подключение остановлено.");
+                    fail("Прокси "+ep+" не прошёл проверку HTTPS. Остановлено.");
                     return;
                 }
-                if(profilesCount()>1&&exit.equals(lastProxyIp)){
-                    fail("Внешний IP не изменился при переключении прокси. Повтор остановлен.");
+                if(exit.equals(lastProxyIp)&&loop>1){
+                    if(tor&&attempt<2){
+                        String nextPass="tm"+loop+"_"+SystemClock.uptimeMillis()+"_"+(attempt+1);
+                        startProxyConnection(ep,user,nextPass,true,attempt+1);
+                    }else{
+                        fail("Внешний IP остался прежним. Сценарий остановлен.");
+                    }
                     return;
                 }
                 lastProxyIp=exit;
-                state="SOCKS5 активен. Внешний IP: "+exit;
+                state=(tor?"Tor":"SOCKS5")+" IP: "+exit;
                 updatePanel();
                 handler.postDelayed(this::nextStep,500);
             });
