@@ -1,7 +1,7 @@
 name: Build TapMemory APK
 on:
   push:
-    branches: [ "tooling/tapmemory-apk" ]
+    branches: [ "tooling/tapmemory-v2-2" ]
   workflow_dispatch:
 permissions:
   contents: write
@@ -25,13 +25,13 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: TapMemory-debug-apk
+          name: TapMemory-2.2-apk
           path: app/build/outputs/apk/debug/app-debug.apk
       - name: Publish installable APK
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk TapMemory.apk
+          cp app/build/outputs/apk/debug/app-debug.apk TapMemory-2.2.apk
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add TapMemory.apk
           git commit -m 'Publish TapMemory APK' || true
-          git push origin HEAD:tooling/tapmemory-apk
+          git push origin HEAD:tooling/tapmemory-v2-2
