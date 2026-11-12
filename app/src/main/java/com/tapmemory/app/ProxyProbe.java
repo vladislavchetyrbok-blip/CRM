@@ -12,15 +12,32 @@ import javax.net.ssl.SSLSocketFactory;
 
 final class ProxyProbe {
     static String exitIp(ProxyList.Endpoint ep) {
+        return exitIp(ep,"","");
+    }
+    static String exitIp(ProxyList.Endpoint ep,String user,String password) {
         String remote="api.ipify.org";
         int timeout=7000;
         try(Socket raw=new Socket()){
             raw.connect(new InetSocketAddress(ep.host,ep.port),timeout);
             raw.setSoTimeout(timeout);
             OutputStream out=raw.getOutputStream();
-            out.write(new byte[]{5,1,0});out.flush();
+            boolean auth=!user.isEmpty()&&!password.isEmpty();
+            out.write(new byte[]{5,1,(byte)(auth?2:0)});out.flush();
             byte[] reply=new byte[2];readAll(raw,reply);
-            if(reply[0]!=5||reply[1]!=0)return null;
+            if(reply[0]!=5||reply[1]!=(auth?2:0))return null;
+            if(auth){
+                byte[] name=user.getBytes(StandardCharsets.UTF_8);
+                byte[] secret=password.getBytes(StandardCharsets.UTF_8);
+                if(name.length<1||name.length>255||secret.length<1||secret.length>255)return null;
+                byte[] message=new byte[3+name.length+secret.length];
+                message[0]=1;message[1]=(byte)name.length;
+                System.arraycopy(name,0,message,2,name.length);
+                message[2+name.length]=(byte)secret.length;
+                System.arraycopy(secret,0,message,3+name.length,secret.length);
+                out.write(message);out.flush();
+                byte[] authReply=new byte[2];readAll(raw,authReply);
+                if(authReply[0]!=1||authReply[1]!=0)return null;
+            }
             byte[] hostname=remote.getBytes(StandardCharsets.US_ASCII);
             byte[] connect=new byte[7+hostname.length];
             connect[0]=5;connect[1]=1;connect[2]=0;connect[3]=3;connect[4]=(byte)hostname.length;
