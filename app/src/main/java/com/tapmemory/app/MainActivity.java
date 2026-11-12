@@ -46,6 +46,11 @@ public class MainActivity extends Activity {
             s.beginRecord(); refresh();
             moveTaskToBack(true);
         });
+        button("● Продолжить запись, не удаляя шаги",()->{
+            MacroAccessibilityService s=MacroAccessibilityService.instance;
+            if(s==null){toast("Включите службу TapMemory");return;}
+            s.beginAppendRecord();refresh();moveTaskToBack(true);
+        });
         button("■ Завершить запись",()->{
             MacroAccessibilityService s=MacroAccessibilityService.instance;
             if(s!=null) s.stopAll(); refresh();
@@ -125,9 +130,15 @@ public class MainActivity extends Activity {
             TextView text=new TextView(this); text.setText((i+1)+". "+s+" ("+j.optLong("delay")+" мс)");
             text.setTextColor(Color.WHITE);text.setTextSize(14);
             row.addView(text,new LinearLayout.LayoutParams(0,-2,1));
-            Button del=new Button(this);del.setText("×");del.setOnClickListener(v->{
+            Button up=new Button(this);up.setText("↑");up.setMinWidth(0);up.setOnClickListener(v->{
+                MacroStore.move(this,index,index-1);refresh();
+            });row.addView(up,new LinearLayout.LayoutParams(dp(40),dp(48)));
+            Button down=new Button(this);down.setText("↓");down.setMinWidth(0);down.setOnClickListener(v->{
+                MacroStore.move(this,index,index+1);refresh();
+            });row.addView(down,new LinearLayout.LayoutParams(dp(40),dp(48)));
+            Button del=new Button(this);del.setMinWidth(0);del.setText("×");del.setOnClickListener(v->{
                 MacroStore.remove(this,index);refresh();
-            });row.addView(del,new LinearLayout.LayoutParams(dp(54),dp(50)));
+            });row.addView(del,new LinearLayout.LayoutParams(dp(40),dp(48)));
             list.addView(row);
         }
     }
