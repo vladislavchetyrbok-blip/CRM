@@ -103,7 +103,7 @@ public class MainActivity extends Activity {
         proxyList.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         proxyList.setMinLines(4);proxyList.setMaxLines(8);
         page.addView(proxyList,new LinearLayout.LayoutParams(-1,dp(128)));
-        info("SOCKS5 без логина: один host:port в строке. Можно использовать бесплатный Orbot: режим Power User, порт 9050, строка 127.0.0.1:9050. Для автоматической смены адресов добавьте два и более рабочих прокси. Бесплатные публичные прокси нестабильны и могут быть небезопасны.");
+        info("SOCKS5 без логина: один host:port в строке. Можно использовать бесплатный Orbot: режим Power User, порт 9050, строка 127.0.0.1:9050. Для Orbot приложение создаёт новый Tor-маршрут при каждом повторе и проверяет внешний IP. С обычными SOCKS5 добавьте 2+ сервера. Бесплатные публичные прокси могут быть небезопасны.");
         button("＋ Добавить бесплатный Tor (Orbot)",()->{
             String v=proxyList.getText().toString().trim();
             if(!v.contains("127.0.0.1:9050"))
