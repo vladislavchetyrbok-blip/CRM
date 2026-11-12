@@ -2,8 +2,10 @@ package com.tapmemory.app;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
-import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
@@ -11,200 +13,332 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.content.Context;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.view.Gravity;
-import android.view.WindowManager;
-import android.view.View;
 import android.view.MotionEvent;
-import android.widget.*;
-import org.json.JSONObject;
+import android.view.View;
+import android.view.WindowManager;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.ArrayDeque;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MacroAccessibilityService extends AccessibilityService {
     static volatile MacroAccessibilityService instance;
-    volatile String state="Готово. Запишите действия или запустите сценарий.";
-    private boolean recording=false, playing=false;
-    private long lastRecorded=0, lastScroll=0; private int lastX=-1,lastY=-1;
-    private Handler h=new Handler(Looper.getMainLooper());
-    private ExecutorService executor=Executors.newSingleThreadExecutor();
-    private JSONArray playSteps;
-    private int currentStep=0, iteration=0, repeats=1, interval=1200, rotation=0;
-    private String rotationUrl="";
-    private WindowManager wm; private LinearLayout overlay;
-    private WindowManager.LayoutParams overlayParams;
-    private TextView overlayLabel;
+    volatile String state="Служба активна";
+    private final Handler handler=new Handler(Looper.getMainLooper());
+    private final ExecutorService io=Executors.newSingleThreadExecutor();
+    private boolean recording=false,playing=false,collapsed=false;
+    private int generation=0,stepIndex=0,loop=0,limit=1,gapMs=1200,ipMode=0;
+    private long lastEvent=0,lastScroll=0,lastActionStart=0;
+    private int prevX=-100,prevY=-100;
+    private String targetPackage="",ipUrl="";
+    private JSONArray snapshot=new JSONArray();
+    private WindowManager manager;
+    private WindowManager.LayoutParams panelLayout;
+    private LinearLayout panel;
+    private TextView handle;
+    private Button recordButton,playButton,stopButton;
 
     @Override protected void onServiceConnected(){
-        super.onServiceConnected();instance=this;createOverlay();
-        state="Служба включена. Готово к записи.";
+        super.onServiceConnected();
+        instance=this;
+        state="Служба активна. Можно записывать.";
+        buildPanel();
     }
     @Override public void onInterrupt(){stopAll();}
     @Override public void onDestroy(){
-        stopAll(); if(overlay!=null){try{wm.removeView(overlay);}catch(Exception ignored){}}
-        instance=null;executor.shutdownNow();super.onDestroy();
+        stopAll();
+        if(manager!=null&&panel!=null){
+            try{manager.removeView(panel);}catch(Exception ignored){}
+        }
+        io.shutdownNow();instance=null;super.onDestroy();
+    }
+
+    private static String limited(CharSequence s){
+        if(s==null)return "";
+        String value=s.toString().trim().replace('\n',' ');
+        return value.length()>110?value.substring(0,110):value;
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event){
-        if(!recording || event==null)return;
-        CharSequence pkg=event.getPackageName();
-        if(pkg==null || pkg.toString().equals(getPackageName()) ||
-                pkg.toString().equals("com.android.systemui"))return;
+        if(!recording||event==null)return;
+        CharSequence p=event.getPackageName();
+        if(p==null)return;
+        String pkg=p.toString();
+        if(pkg.equals(getPackageName())||pkg.equals("com.android.systemui")||
+            pkg.contains("inputmethod")||pkg.contains("keyboard"))return;
         int type=event.getEventType();
-        long now=SystemClock.uptimeMillis();
-        if(type==AccessibilityEvent.TYPE_VIEW_CLICKED){
-            AccessibilityNodeInfo src=event.getSource();
-            if(src==null)return;
-            if(src.isPassword()){src.recycle();return;}
-            Rect r=new Rect();src.getBoundsInScreen(r);src.recycle();
-            if(r.isEmpty() || r.centerX()<0 || r.centerY()<0)return;
-            int x=r.centerX(),y=r.centerY();
-            if(now-lastRecorded<250 && Math.abs(x-lastX)<8 && Math.abs(y-lastY)<8)return;
-            JSONObject j=MacroStore.step("tap",lastRecorded==0?500:now-lastRecorded);
-            MacroStore.put(j,"x",x);MacroStore.put(j,"y",y);
-            MacroStore.add(this,j);lastRecorded=now;lastX=x;lastY=y;
-            state="Запись: "+MacroStore.steps(this).length()+" шагов";
-        } else if(type==AccessibilityEvent.TYPE_VIEW_SCROLLED && now-lastScroll>650){
-            int dy=android.os.Build.VERSION.SDK_INT>=28?event.getScrollDeltaY():0;
-            if(dy==0)return;
-            AccessibilityNodeInfo src=event.getSource();Rect r=new Rect();
-            if(src!=null){src.getBoundsInScreen(r);src.recycle();}
-            android.util.DisplayMetrics d=getResources().getDisplayMetrics();
-            int x=r.isEmpty()?d.widthPixels/2:r.centerX();
-            int y=r.isEmpty()?d.heightPixels/2:r.centerY();
-            JSONObject j=MacroStore.step("swipe",lastRecorded==0?400:now-lastRecorded);
-            MacroStore.put(j,"x",x);MacroStore.put(j,"y",y);
-            MacroStore.put(j,"direction",dy>0?"up":"down");
-            MacroStore.add(this,j);
-            lastRecorded=now;lastScroll=now;
-            state="Запись: "+MacroStore.steps(this).length()+" шагов";
+        if(type!=AccessibilityEvent.TYPE_VIEW_CLICKED &&
+           type!=AccessibilityEvent.TYPE_VIEW_LONG_CLICKED &&
+           type!=AccessibilityEvent.TYPE_VIEW_SCROLLED)return;
+        AccessibilityNodeInfo node=event.getSource();
+        if(node==null)return;
+        if(node.isPassword()){node.recycle();return;}
+        Rect bounds=new Rect();node.getBoundsInScreen(bounds);
+        if(bounds.isEmpty()){node.recycle();return;}
+        long now=event.getEventTime();
+        int x=bounds.centerX(),y=bounds.centerY();
+        boolean scroll=type==AccessibilityEvent.TYPE_VIEW_SCROLLED;
+        if(scroll){
+            if(now-lastScroll<440){node.recycle();return;}
+        }else if(now-lastEvent<200&&Math.abs(x-prevX)<12&&Math.abs(y-prevY)<12){
+            node.recycle();return;
         }
-        showOverlay();
+        long delay=lastEvent==0?250:Math.max(0,Math.min(3600000,now-lastEvent));
+        JSONObject step=MacroStore.step(scroll?"scroll":type==AccessibilityEvent.TYPE_VIEW_LONG_CLICKED?"long":"tap",delay);
+        MacroStore.put(step,"x",x);
+        MacroStore.put(step,"y",y);
+        android.util.DisplayMetrics d=getResources().getDisplayMetrics();
+        MacroStore.put(step,"rx",d.widthPixels==0?0.5:(double)x/d.widthPixels);
+        MacroStore.put(step,"ry",d.heightPixels==0?0.5:(double)y/d.heightPixels);
+        MacroStore.put(step,"id",limited(node.getViewIdResourceName()));
+        MacroStore.put(step,"cls",limited(node.getClassName()));
+        if(!node.isEditable()){
+            MacroStore.put(step,"label",limited(node.getText()));
+            MacroStore.put(step,"desc",limited(node.getContentDescription()));
+        }
+        if(scroll){
+            int delta=android.os.Build.VERSION.SDK_INT>=28?event.getScrollDeltaY():0;
+            if(delta==0){node.recycle();return;}
+            MacroStore.put(step,"direction",delta>0?"up":"down");
+            MacroStore.put(step,"amount",Math.max(170,Math.min(900,Math.abs(delta))));
+            lastScroll=now;
+        }
+        node.recycle();
+        if(targetPackage.isEmpty()){
+            targetPackage=pkg;MacroStore.setTarget(this,pkg);
+        }
+        MacroStore.add(this,step);
+        lastEvent=now;prevX=x;prevY=y;
+        state="Запись: "+MacroStore.steps(this).length()+" действий";
+        updatePanel();
     }
-    public void beginRecord(){
-        stopAll(); MacroStore.save(this,new JSONArray());
-        beginAppendRecord();
-    }
-    public void beginAppendRecord(){
+
+    public void startRecording(boolean clear){
         stopAll();
-        recording=true;lastRecorded=0;lastScroll=0;lastX=-1;lastY=-1;
-        state="● Запись: перейдите в приложение и нажимайте элементы.";
-        showOverlay();
+        if(clear){MacroStore.save(this,new JSONArray());MacroStore.setTarget(this,"");}
+        targetPackage=MacroStore.target(this);
+        recording=true;lastEvent=0;lastScroll=0;prevX=-100;prevY=-100;
+        state="Запись включена. Нажмите ■ для остановки.";
+        updatePanel();
     }
-    public void beginPlay(){
-        stopAll(); playSteps=MacroStore.steps(this);
-        if(playSteps.length()==0){state="Сценарий пуст";return;}
-        try{repeats=Integer.parseInt(MacroStore.pref(this).getString("repeats","1"));}
-        catch(Exception e){repeats=1;}
-        try{interval=Integer.parseInt(MacroStore.pref(this).getString("pause","1200"));}
-        catch(Exception e){interval=1200;}
-        repeats=Math.max(0,Math.min(100000,repeats));
-        interval=Math.max(100,Math.min(60000,interval));
-        rotation=MacroStore.pref(this).getInt("mode",0);
-        rotationUrl=MacroStore.pref(this).getString("url","");
-        iteration=0;currentStep=0;playing=true;
-        state="▶ Запуск сценария";
-        showOverlay();h.postDelayed(this::nextCycle,800);
-    }
-    public void stopAll(){
-        recording=false;playing=false;h.removeCallbacksAndMessages(null);
-        state="■ Остановлено";showOverlay();
-    }
-    private void nextCycle(){
-        if(!playing)return;
-        if(repeats>0 && iteration>=repeats){
-            playing=false;state="✓ Выполнено "+iteration+" повторов";showOverlay();return;
+
+    public void startPlayback(){
+        stopAll();
+        snapshot=MacroStore.steps(this);
+        if(snapshot.length()==0){state="Сценарий пуст.";updatePanel();return;}
+        String repeatValue=MacroStore.pref(this).getString("repeats","1");
+        String gapValue=MacroStore.pref(this).getString("pause","1.2");
+        try{limit=Math.max(0,Math.min(100000,Integer.parseInt(repeatValue.trim())));}
+        catch(Exception e){limit=1;}
+        try{gapMs=(int)Math.max(0,Math.min(600000,Double.parseDouble(gapValue.trim().replace(',','.'))*1000));}
+        catch(Exception e){gapMs=1200;}
+        ipMode=MacroStore.pref(this).getInt("mode",0);
+        ipUrl=MacroStore.pref(this).getString("url","");
+        if(ipMode==1&&!ipUrl.startsWith("https://")){
+            state="Для смены IP нужна HTTPS-команда роутера или провайдера.";updatePanel();return;
         }
-        iteration++;currentStep=0;
-        state="Повтор "+iteration+(repeats==0?" / ∞":" / "+repeats);
-        showOverlay();
-        if(rotation==1)rotateAirplane(true);
-        else if(rotation==2)rotateViaUrl();
-        else h.postDelayed(this::nextStep,120);
+        targetPackage=MacroStore.target(this);
+        stepIndex=0;loop=0;playing=true;
+        state="Запуск сценария…";updatePanel();
+        if(!targetPackage.isEmpty()){
+            try{
+                Intent launch=getPackageManager().getLaunchIntentForPackage(targetPackage);
+                if(launch!=null){
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    startActivity(launch);
+                }
+            }catch(Exception ignored){}
+        }
+        handler.postDelayed(this::startLoop,1100);
+    }
+
+    public void stopAll(){
+        generation++;recording=false;playing=false;
+        handler.removeCallbacksAndMessages(null);
+        state="Остановлено";updatePanel();
+    }
+    private void fail(String message){
+        generation++;playing=false;recording=false;
+        handler.removeCallbacksAndMessages(null);
+        state="Ошибка: "+message;updatePanel();
+    }
+    private void startLoop(){
+        if(!playing)return;
+        if(limit!=0&&loop>=limit){
+            playing=false;state="Готово: "+loop+" повторов.";updatePanel();return;
+        }
+        loop++;stepIndex=0;lastActionStart=0;
+        state="Повтор "+loop+(limit==0?" / ∞":" / "+limit);updatePanel();
+        if(ipMode==1)changeIpAndVerify();
+        else handler.postDelayed(this::nextStep,250);
     }
     private void nextStep(){
         if(!playing)return;
-        if(currentStep>=playSteps.length()){
-            h.postDelayed(this::nextCycle,interval);return;
+        if(stepIndex>=snapshot.length()){
+            handler.postDelayed(this::startLoop,gapMs);return;
         }
-        JSONObject j=playSteps.optJSONObject(currentStep++);
-        if(j==null){h.post(this::nextStep);return;}
-        long delay=Math.max(100,Math.min(60000,j.optLong("delay",300)));
-        h.postDelayed(()->performStep(j),delay);
+        JSONObject step=snapshot.optJSONObject(stepIndex);
+        if(step==null){stepIndex++;handler.post(this::nextStep);return;}
+        long delay=Math.max(0,Math.min(3600000,step.optLong("delay",250)));
+        long elapsed=lastActionStart==0?0:SystemClock.uptimeMillis()-lastActionStart;
+        long wait=lastActionStart==0?Math.min(1000,delay):Math.max(0,delay-elapsed);
+        handler.postDelayed(()->attemptStep(step,SystemClock.uptimeMillis()+12000),wait);
     }
-    private void performStep(JSONObject j){
+    private boolean matchingPackage(AccessibilityNodeInfo root){
+        if(targetPackage.isEmpty())return true;
+        CharSequence pkg=root.getPackageName();
+        return pkg!=null && targetPackage.equals(pkg.toString());
+    }
+    private void attemptStep(JSONObject step,long deadline){
         if(!playing)return;
-        String type=j.optString("type");
-        if(type.equals("wait")){h.post(this::nextStep);return;}
-        if(type.equals("text")){
-            if(!insertText(j.optString("text"))){
-                fail("Не найдено активное поле для вставки текста");return;
-            }
-            h.postDelayed(this::nextStep,200);return;
+        String type=step.optString("type","");
+        if(type.equals("wait")){
+            lastActionStart=SystemClock.uptimeMillis();stepIndex++;nextStep();return;
         }
-        int x=j.optInt("x"),y=j.optInt("y");
-        if(type.equals("tap")){
-            Path p=new Path();p.moveTo(x,y);
-            GestureDescription.StrokeDescription stroke=new GestureDescription.StrokeDescription(p,0,85);
-            sendGesture(stroke,()->h.postDelayed(this::nextStep,120));
-        } else if(type.equals("swipe")){
-            android.util.DisplayMetrics d=getResources().getDisplayMetrics();
-            int dist=Math.max(140,d.heightPixels/3);
-            boolean up="up".equals(j.optString("direction"));
-            int fromY=Math.max(70,Math.min(d.heightPixels-70,y+(up?dist/2:-dist/2)));
-            int toY=Math.max(70,Math.min(d.heightPixels-70,y+(up?-dist/2:dist/2)));
-            Path p=new Path();p.moveTo(x,fromY);p.lineTo(x,toY);
-            sendGesture(new GestureDescription.StrokeDescription(p,0,350),()->h.post(this::nextStep));
-        } else h.post(this::nextStep);
-    }
-    private void sendGesture(GestureDescription.StrokeDescription stroke,Runnable done){
-        GestureDescription.Builder b=new GestureDescription.Builder();b.addStroke(stroke);
-        boolean sent=dispatchGesture(b.build(),new GestureResultCallback(){
-            @Override public void onCompleted(GestureDescription gesture){
-                if(playing)done.run();
-            }
-            @Override public void onCancelled(GestureDescription gesture){
-                if(playing)fail("Android отменил жест");
-            }
-        },h);
-        if(!sent)fail("Не удалось выполнить касание");
-    }
-    private boolean insertText(String text){
         AccessibilityNodeInfo root=getRootInActiveWindow();
-        if(root==null)return false;
-        AccessibilityNodeInfo node=root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-        if(node==null)node=findEditable(root);
-        boolean ok=false;
-        if(node!=null){
-            ClipboardManager cm=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
-            if(cm!=null){
-                cm.setPrimaryClip(ClipData.newPlainText("TapMemory",text));
-                ok=node.performAction(AccessibilityNodeInfo.ACTION_PASTE);
-            }
-            if(!ok){
-                Bundle data=new Bundle();
-                data.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,text);
-                ok=node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,data);
-            }
-            node.recycle();
+        if(root==null||!matchingPackage(root)){
+            if(root!=null)root.recycle();
+            retry(step,deadline,"Ожидание нужного приложения");return;
         }
-        root.recycle();return ok;
+        if(type.equals("text")){
+            AccessibilityNodeInfo field=root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+            if(field==null||!field.isEditable()||!field.isFocused()){
+                if(field!=null)field.recycle();
+                root.recycle();retry(step,deadline,"Ожидание поля ввода");return;
+            }
+            if(field.isPassword()){
+                field.recycle();root.recycle();fail("Ввод в парольное поле запрещён.");return;
+            }
+            String text=step.optString("text","");
+            boolean ok=false;
+            try{
+                ClipboardManager clipboard=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+                if(clipboard!=null){
+                    clipboard.setPrimaryClip(ClipData.newPlainText("TapMemory",text));
+                    ok=field.performAction(AccessibilityNodeInfo.ACTION_PASTE);
+                }
+                if(!ok){
+                    Bundle args=new Bundle();
+                    args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,text);
+                    ok=field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args);
+                }
+            }catch(Exception ignored){}
+            field.recycle();root.recycle();
+            if(!ok){fail("Chrome не разрешил вставку текста.");return;}
+            completeStep();return;
+        }
+        AccessibilityNodeInfo match=findMatch(root,step);
+        boolean semantic=hasLocator(step);
+        int x=resolveX(step),y=resolveY(step);
+        if(match==null&&semantic&&("tap".equals(type)||"long".equals(type))){
+            root.recycle();retry(step,deadline,"Ожидание элемента страницы");return;
+        }
+        if(match!=null){
+            Rect rect=new Rect();match.getBoundsInScreen(rect);
+            if(!rect.isEmpty()){x=rect.centerX();y=rect.centerY();}
+            match.recycle();
+        }
+        root.recycle();
+        if("tap".equals(type)||"long".equals(type)){
+            Path path=new Path();path.moveTo(x,y);
+            long hold=type.equals("long")?650:65;
+            lastActionStart=SystemClock.uptimeMillis();
+            gesture(new GestureDescription.StrokeDescription(path,0,hold),()->{
+                stepIndex++;nextStep();
+            });
+        }else if("scroll".equals(type)){
+            android.util.DisplayMetrics d=getResources().getDisplayMetrics();
+            int range=Math.max(190,Math.min(d.heightPixels/2,step.optInt("amount",350)));
+            int fromY=Math.max(90,Math.min(d.heightPixels-90,y+("up".equals(step.optString("direction"))?range/2:-range/2)));
+            int toY=Math.max(90,Math.min(d.heightPixels-90,y+("up".equals(step.optString("direction"))?-range/2:range/2)));
+            Path path=new Path();path.moveTo(x,fromY);path.lineTo(x,toY);
+            lastActionStart=SystemClock.uptimeMillis();
+            gesture(new GestureDescription.StrokeDescription(path,0,360),()->{
+                stepIndex++;nextStep();
+            });
+        }else{fail("Неизвестное действие: "+type);}
     }
-    private AccessibilityNodeInfo findEditable(AccessibilityNodeInfo root){
+    private void completeStep(){
+        lastActionStart=SystemClock.uptimeMillis();
+        stepIndex++;handler.post(this::nextStep);
+    }
+    private void retry(JSONObject step,long deadline,String status){
+        if(SystemClock.uptimeMillis()>=deadline){
+            fail(status+": превышено 12 секунд на шаге "+(stepIndex+1));return;
+        }
+        state=status+" · шаг "+(stepIndex+1)+"/"+snapshot.length();
+        updatePanel();
+        handler.postDelayed(()->attemptStep(step,deadline),270);
+    }
+    private void gesture(GestureDescription.StrokeDescription stroke,Runnable onSuccess){
+        GestureDescription.Builder builder=new GestureDescription.Builder();
+        builder.addStroke(stroke);
+        boolean dispatched=dispatchGesture(builder.build(),new GestureResultCallback(){
+            @Override public void onCompleted(GestureDescription g){
+                if(playing)onSuccess.run();
+            }
+            @Override public void onCancelled(GestureDescription g){
+                if(playing)fail("Жест отменён Android. Проверьте экран.");
+            }
+        },handler);
+        if(!dispatched)fail("Android отклонил действие.");
+    }
+    private boolean hasLocator(JSONObject step){
+        return !step.optString("id").isEmpty() || !step.optString("label").isEmpty() ||
+            !step.optString("desc").isEmpty();
+    }
+    private int resolveX(JSONObject step){
+        android.util.DisplayMetrics d=getResources().getDisplayMetrics();
+        if(step.has("rx"))return (int)(step.optDouble("rx",0.5)*d.widthPixels);
+        return step.optInt("x",d.widthPixels/2);
+    }
+    private int resolveY(JSONObject step){
+        android.util.DisplayMetrics d=getResources().getDisplayMetrics();
+        if(step.has("ry"))return (int)(step.optDouble("ry",0.5)*d.heightPixels);
+        return step.optInt("y",d.heightPixels/2);
+    }
+    private AccessibilityNodeInfo findMatch(AccessibilityNodeInfo root,JSONObject step){
+        if(!hasLocator(step))return null;
+        String id=step.optString("id"),label=step.optString("label"),desc=step.optString("desc");
+        String cls=step.optString("cls");
         ArrayDeque<AccessibilityNodeInfo> queue=new ArrayDeque<>();
         queue.add(AccessibilityNodeInfo.obtain(root));
-        int limit=0;
-        while(!queue.isEmpty() && ++limit<500){
+        AccessibilityNodeInfo best=null;int bestScore=0,visited=0;
+        while(!queue.isEmpty()&&visited++<900){
             AccessibilityNodeInfo n=queue.removeFirst();
-            if(n.isEditable() && n.isFocused()) {
-                while(!queue.isEmpty())queue.removeFirst().recycle();
-                return n;
+            int score=0;
+            String ni=limited(n.getViewIdResourceName());
+            String nl=limited(n.getText());
+            String nd=limited(n.getContentDescription());
+            String nc=limited(n.getClassName());
+            if(!id.isEmpty()&&id.equals(ni))score+=120;
+            if(!label.isEmpty()&&label.equals(nl))score+=90;
+            if(!desc.isEmpty()&&desc.equals(nd))score+=90;
+            if(score>=90){
+                if(!cls.isEmpty()&&cls.equals(nc))score+=10;
+                if(n.isVisibleToUser())score+=15;
+                if(n.isClickable())score+=5;
+                Rect rect=new Rect();n.getBoundsInScreen(rect);
+                if(!rect.isEmpty()){
+                    int dx=Math.abs(rect.centerX()-resolveX(step));
+                    int dy=Math.abs(rect.centerY()-resolveY(step));
+                    if(dx<75&&dy<75)score+=8;
+                }
+                if(score>bestScore){
+                    if(best!=null)best.recycle();
+                    best=AccessibilityNodeInfo.obtain(n);bestScore=score;
+                }
             }
             for(int i=0;i<n.getChildCount();i++){
                 AccessibilityNodeInfo child=n.getChild(i);
@@ -213,156 +347,122 @@ public class MacroAccessibilityService extends AccessibilityService {
             n.recycle();
         }
         while(!queue.isEmpty())queue.removeFirst().recycle();
-        return null;
+        return best;
     }
-    private void rotateViaUrl(){
-        if(!rotationUrl.startsWith("https://")){
-            fail("Нужна HTTPS-ссылка смены IP");return;
-        }
-        state="Смена IP: вызов команды провайдера…";showOverlay();
-        executor.execute(()->{
-            boolean ok=false;String message="";
+    // The device stays associated with Wi-Fi. IP rotation requires a router/provider HTTPS API.
+    private void changeIpAndVerify(){
+        final int epoch=generation;
+        state="Проверяю текущий внешний IP…";updatePanel();
+        io.execute(()->{
+            String before=readIp();
+            if(before==null){
+                handler.post(()->{if(playing&&epoch==generation)fail("Не удалось проверить внешний IP.");});
+                return;
+            }
+            boolean accepted=false;
             try{
-                HttpURLConnection c=(HttpURLConnection)new URL(rotationUrl).openConnection();
-                c.setRequestMethod("GET");c.setConnectTimeout(8000);c.setReadTimeout(8000);
-                c.setInstanceFollowRedirects(false);
-                int code=c.getResponseCode();ok=code>=200&&code<300;
-                message="Ответ HTTP "+code;c.disconnect();
-            }catch(Exception e){message=e.getClass().getSimpleName();}
-            final boolean result=ok;final String m=message;
-            h.post(()->{
-                if(!playing)return;
-                if(!result){fail("Не удалось отправить команду смены IP: "+m);return;}
-                state="Команда смены IP отправлена; ожидание сети 6 с";
-                showOverlay();h.postDelayed(this::nextStep,6000);
+                HttpURLConnection conn=(HttpURLConnection)new URL(ipUrl).openConnection();
+                conn.setRequestMethod("GET");conn.setConnectTimeout(9000);conn.setReadTimeout(9000);
+                conn.setInstanceFollowRedirects(false);
+                conn.setRequestProperty("Cache-Control","no-cache");
+                int code=conn.getResponseCode();accepted=code>=200&&code<300;
+                conn.disconnect();
+            }catch(Exception ignored){}
+            if(!accepted){
+                handler.post(()->{if(playing&&epoch==generation)fail("Роутер/провайдер не принял команду смены IP.");});
+                return;
+            }
+            boolean changed=false;
+            for(int k=0;k<14&&epoch==generation;k++){
+                try{Thread.sleep(2000);}catch(InterruptedException e){Thread.currentThread().interrupt();return;}
+                String after=readIp();
+                if(after!=null&&!after.equals(before)){changed=true;break;}
+            }
+            final boolean result=changed;
+            handler.post(()->{
+                if(!playing||epoch!=generation)return;
+                if(!result){fail("IP не изменился. Проверьте динамический IP и API роутера.");return;}
+                state="IP изменён, Wi-Fi остаётся включённым.";updatePanel();
+                handler.postDelayed(this::nextStep,800);
             });
         });
     }
-    private void rotateAirplane(boolean toOn){
-        if(!playing)return;
-        state=toOn?"Смена IP: включаю авиарежим…":"Смена IP: выключаю авиарежим…";
-        showOverlay();
-        // Some Android skins keep the shade open after the first toggle;
-        // others close it. Check the active window before opening it again.
-        AccessibilityNodeInfo root=getRootInActiveWindow();
-        AccessibilityNodeInfo visible=root==null?null:findAirplane(root);
-        if(visible!=null)visible.recycle();
-        if(root!=null)root.recycle();
-        if(visible!=null){
-            h.postDelayed(()->clickAirplane(toOn),180);
-        }else{
-            performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
-            h.postDelayed(()->clickAirplane(toOn),1100);
-        }
-    }
-    private void clickAirplane(boolean toOn){
-        if(!playing)return;
-        AccessibilityNodeInfo root=getRootInActiveWindow();
-        if(root==null){
-            fail("Не открылась панель быстрых настроек");return;
-        }
-        AccessibilityNodeInfo tile=findAirplane(root);
-        if(tile==null){
-            root.recycle();
-            fail("Кнопка «Авиарежим» не найдена. Проверьте подключение вручную.");
-            return;
-        }
-        boolean clicked=clickParent(tile);
-        tile.recycle();root.recycle();
-        if(!clicked){
-            fail("Не получилось переключить авиарежим");return;
-        }
-        if(toOn){
-            h.postDelayed(()->rotateAirplane(false),2300);
-        }else{
-            h.postDelayed(()->{
-                performGlobalAction(GLOBAL_ACTION_BACK);
-                state="Ожидание мобильной сети (9 с; новый IP не гарантирован)…";
-                showOverlay();h.postDelayed(this::nextStep,9000);
-            },900);
-        }
-    }
-    private AccessibilityNodeInfo findAirplane(AccessibilityNodeInfo root){
-        ArrayDeque<AccessibilityNodeInfo> q=new ArrayDeque<>();
-        q.add(AccessibilityNodeInfo.obtain(root));
-        int limit=0;
-        while(!q.isEmpty()&&++limit<600){
-            AccessibilityNodeInfo n=q.removeFirst();
-            String a=((n.getText()==null?"":n.getText().toString())+" "+(n.getContentDescription()==null?"":n.getContentDescription().toString())).toLowerCase(Locale.ROOT);
-            if(a.contains("airplane")||a.contains("flight mode")||a.contains("авиарежим")
-                ||a.contains("режим полёт")||a.contains("режим полет")
-                ||a.contains("режим польоту")||a.contains("літак")){
-                while(!q.isEmpty())q.removeFirst().recycle();
-                return n;
-            }
-            for(int i=0;i<n.getChildCount();i++){
-                AccessibilityNodeInfo child=n.getChild(i);if(child!=null)q.add(child);
-            }
-            n.recycle();
-        }
-        while(!q.isEmpty())q.removeFirst().recycle();
-        return null;
-    }
-    private boolean clickParent(AccessibilityNodeInfo node){
-        AccessibilityNodeInfo n=AccessibilityNodeInfo.obtain(node);
-        boolean ok=false;
-        for(int i=0;i<5 && n!=null;i++){
-            if(n.isClickable() && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)){ok=true;break;}
-            AccessibilityNodeInfo p=n.getParent();n.recycle();n=p;
-        }
-        if(n!=null)n.recycle();
-        return ok;
-    }
-    private void fail(String message){
-        playing=false;recording=false;state="Ошибка: "+message;showOverlay();
-    }
-    private void createOverlay(){
+    private String readIp(){
         try{
-            wm=(WindowManager)getSystemService(WINDOW_SERVICE);
-            overlay=new LinearLayout(this);
-            overlay.setOrientation(LinearLayout.HORIZONTAL);
-            overlay.setGravity(Gravity.CENTER_VERTICAL);
-            overlay.setBackgroundColor(0xee24384e);
-            overlay.setPadding(10,4,10,4);
-            overlayLabel=new TextView(this); overlayLabel.setTextColor(0xffffffff);
-            overlayLabel.setText("TapMemory");overlayLabel.setTextSize(12);
-            overlay.addView(overlayLabel);
-            Button record=new Button(this);record.setText("●"); record.setOnClickListener(v->{
-                if(recording)stopAll();else beginRecord();
-            });int touchSize=(int)(getResources().getDisplayMetrics().density*46);
-            overlay.addView(record,new LinearLayout.LayoutParams(touchSize,touchSize));
-            Button run=new Button(this);run.setText("▶");run.setOnClickListener(v->{
-                if(!playing)beginPlay();
-            });overlay.addView(run,new LinearLayout.LayoutParams(touchSize,touchSize));
-            Button stop=new Button(this);stop.setText("■");
-            stop.setOnClickListener(v->stopAll());overlay.addView(stop,new LinearLayout.LayoutParams(touchSize,touchSize));
-            overlayParams=new WindowManager.LayoutParams(
+            HttpURLConnection c=(HttpURLConnection)new URL("https://api.ipify.org").openConnection();
+            c.setConnectTimeout(6000);c.setReadTimeout(6000);c.setUseCaches(false);
+            c.setRequestProperty("Cache-Control","no-cache");
+            String ip;
+            try(BufferedReader r=new BufferedReader(new InputStreamReader(c.getInputStream()))){
+                ip=r.readLine();
+            }finally{c.disconnect();}
+            if(ip==null||ip.length()>60||ip.trim().isEmpty())return null;
+            return ip.trim();
+        }catch(Exception ignored){return null;}
+    }
+    private int dp(int x){return (int)(x*getResources().getDisplayMetrics().density+.5f);}
+    private Button control(String title,Runnable action){
+        Button b=new Button(this);b.setText(title);b.setTextSize(14);
+        b.setAllCaps(false);b.setMinHeight(0);b.setMinimumHeight(0);
+        b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(0,0,0,0);
+        b.setOnClickListener(v->action.run());
+        panel.addView(b,new LinearLayout.LayoutParams(dp(41),dp(42)));
+        return b;
+    }
+    private void buildPanel(){
+        try{
+            manager=(WindowManager)getSystemService(WINDOW_SERVICE);
+            panel=new LinearLayout(this);panel.setOrientation(LinearLayout.HORIZONTAL);
+            panel.setGravity(Gravity.CENTER_VERTICAL);
+            panel.setPadding(dp(3),dp(2),dp(3),dp(2));
+            panel.setBackgroundColor(0xee172a42);
+            handle=new TextView(this);handle.setTextColor(0xffffffff);
+            handle.setText(" TM ");handle.setTextSize(13);handle.setGravity(Gravity.CENTER);
+            handle.setPadding(dp(7),0,dp(7),0);
+            panel.addView(handle,new LinearLayout.LayoutParams(dp(48),dp(42)));
+            recordButton=control("●",()->{if(recording)stopAll();else startRecording(false);});
+            playButton=control("▶",()->{if(!playing)startPlayback();});
+            stopButton=control("■",this::stopAll);
+            panelLayout=new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                PixelFormat.TRANSLUCENT);
-            overlayParams.gravity=Gravity.TOP|Gravity.START;
-            overlayParams.x=8;overlayParams.y=175;
-            overlayLabel.setOnTouchListener(new View.OnTouchListener(){
-                float downX,downY;int startX,startY;
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,PixelFormat.TRANSLUCENT);
+            panelLayout.gravity=Gravity.TOP|Gravity.START;panelLayout.x=dp(6);panelLayout.y=dp(140);
+            handle.setOnTouchListener(new View.OnTouchListener(){
+                float downX,downY;int originalX,originalY;
                 @Override public boolean onTouch(View v,MotionEvent e){
                     switch(e.getAction()){
                         case MotionEvent.ACTION_DOWN:
-                            downX=e.getRawX();downY=e.getRawY();startX=overlayParams.x;startY=overlayParams.y;return true;
+                            downX=e.getRawX();downY=e.getRawY();
+                            originalX=panelLayout.x;originalY=panelLayout.y;return true;
                         case MotionEvent.ACTION_MOVE:
-                            overlayParams.x=startX+(int)(e.getRawX()-downX);
-                            overlayParams.y=startY+(int)(e.getRawY()-downY);
-                            wm.updateViewLayout(overlay,overlayParams);return true;
-                    }
-                    return true;
+                            panelLayout.x=originalX+(int)(e.getRawX()-downX);
+                            panelLayout.y=originalY+(int)(e.getRawY()-downY);
+                            try{manager.updateViewLayout(panel,panelLayout);}catch(Exception ignored){}
+                            return true;
+                        case MotionEvent.ACTION_UP:
+                            if(Math.abs(e.getRawX()-downX)<dp(6)&&Math.abs(e.getRawY()-downY)<dp(6)){
+                                collapsed=!collapsed;
+                                int visible=collapsed?View.GONE:View.VISIBLE;
+                                recordButton.setVisibility(visible);
+                                playButton.setVisibility(visible);
+                                stopButton.setVisibility(visible);
+                                handle.setText(collapsed?" TM ":"≡");
+                            }
+                            return true;
+                    }return false;
                 }
             });
-            wm.addView(overlay,overlayParams);
-        }catch(Exception e){state="Служба работает без плавающей панели: "+e.getMessage();}
+            manager.addView(panel,panelLayout);
+        }catch(Exception e){
+            state="Служба работает без панели: "+e.getClass().getSimpleName();
+        }
     }
-    private void showOverlay(){
-        if(overlayLabel!=null)h.post(()->{
-            if(overlayLabel!=null)overlayLabel.setText(recording?"● REC":playing?"▶ "+iteration:"TapMemory");
+    private void updatePanel(){
+        handler.post(()->{
+            if(handle!=null&&!collapsed)
+                handle.setText(recording?"REC":playing?("▶"+loop):"≡");
         });
     }
 }
