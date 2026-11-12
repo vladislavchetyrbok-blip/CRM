@@ -105,7 +105,7 @@ final class MacroStore {
         return pref(c).getString("target_"+active(c),"");
     }
     static JSONObject step(String type,long delay){
-        JSONObject j=new JSONObject();put(j,"type",type);put(j,"delay",Math.max(100,Math.min(60000,delay)));
+        JSONObject j=new JSONObject();put(j,"type",type);put(j,"delay",Math.max(0,Math.min(3600000,delay)));
         return j;
     }
     static void put(JSONObject j,String k,Object v){
