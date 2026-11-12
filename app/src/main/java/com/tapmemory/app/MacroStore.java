@@ -25,6 +25,16 @@ final class MacroStore {
         for(int k=0;k<a.length();k++) if(k!=i) b.put(a.optJSONObject(k));
         save(c,b);
     }
+    static synchronized void move(Context c,int from,int to) {
+        JSONArray a=steps(c);
+        if(from<0 || from>=a.length() || to<0 || to>=a.length()) return;
+        JSONArray b=new JSONArray();
+        for(int i=0;i<a.length();i++) {
+            int src=i==from?to:i==to?from:i;
+            b.put(a.optJSONObject(src));
+        }
+        save(c,b);
+    }
     static synchronized void replaceLastText(Context c, JSONObject step) {
         JSONArray a = steps(c);
         if(a.length()>0 && "text".equals(a.optJSONObject(a.length()-1).optString("type"))) {
