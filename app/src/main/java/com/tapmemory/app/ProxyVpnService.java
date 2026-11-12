@@ -51,10 +51,10 @@ public final class ProxyVpnService extends VpnService {
         else context.startService(intent);
     }
 
-    static boolean switchProxy(ProxyList.Endpoint ep,String target){
+    static boolean switchProxy(ProxyList.Endpoint ep,String target,String username,String password){
         ProxyVpnService service=instance;
         if(service==null)return false;
-        service.reconfigure(ep.host,ep.port,target);
+        service.reconfigure(ep.host,ep.port,target,username,password);
         return true;
     }
 
@@ -87,11 +87,11 @@ public final class ProxyVpnService extends VpnService {
             String host=intent.getStringExtra(HOST);
             int port=intent.getIntExtra(PORT,0);
             String target=intent.getStringExtra(TARGET);
-            reconfigure(host,port,target);
+            reconfigure(host,port,target,"","");
         }
         return START_NOT_STICKY;
     }
-    private void reconfigure(String host,int port,String target) {
+    private void reconfigure(String host,int port,String target,String username,String password) {
         if(host==null||port<1||port>65535){status="Ошибка конфигурации прокси";return;}
         final int job=++serial;
         ready=false;status="Переключение прокси…";
@@ -125,8 +125,14 @@ public final class ProxyVpnService extends VpnService {
                 File conf=new File(getCacheDir(),"tapmemory-socks.conf");
                 String yaml="misc:\n  task-stack-size: 81920\n"+
                     "tunnel:\n  mtu: 8500\n  icmp: 'reply'\n"+
-                    "socks5:\n  port: "+port+"\n  address: '"+host+"'\n  udp: 'tcp'\n"+
-                    "mapdns:\n  address: 198.18.0.2\n  port: 53\n"+
+                    "socks5:\n  port: "+port+"\n  address: '"+host+"'\n  udp: 'tcp'\n";
+                if(!username.isEmpty()&&!password.isEmpty()){
+                    if(username.length()>100||password.length()>100||
+                       username.contains("'")||password.contains("'"))
+                        throw new IllegalArgumentException("Некорректный Tor token");
+                    yaml+="  username: '"+username+"'\n  password: '"+password+"'\n";
+                }
+                yaml+="mapdns:\n  address: 198.18.0.2\n  port: 53\n"+
                     "  network: 240.0.0.0\n  netmask: 240.0.0.0\n"+
                     "  cache-size: 10000\n";
                 try(FileOutputStream stream=new FileOutputStream(conf,false)){
