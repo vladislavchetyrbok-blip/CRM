@@ -238,26 +238,45 @@ public class MacroAccessibilityService extends AccessibilityService {
         if(!playing)return;
         state=toOn?"Смена IP: включаю авиарежим…":"Смена IP: выключаю авиарежим…";
         showOverlay();
-        performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
-        h.postDelayed(()->{
-            if(!playing)return;
-            AccessibilityNodeInfo root=getRootInActiveWindow();
-            if(root==null){fail("Не открылась шторка быстрых настроек");return;}
-            AccessibilityNodeInfo tile=findAirplane(root);
-            if(tile==null){root.recycle();fail("Кнопка «Авиарежим» не найдена. Режим не подходит этому телефону.");return;}
-            boolean clicked=clickParent(tile);
-            tile.recycle();root.recycle();
-            if(!clicked){fail("Не получилось переключить авиарежим");return;}
-            if(toOn){
-                h.postDelayed(()->rotateAirplane(false),2300);
-            }else{
-                h.postDelayed(()->{
-                    performGlobalAction(GLOBAL_ACTION_BACK);
-                    state="Ожидание повторного подключения мобильной сети (9 с)…";
-                    showOverlay();h.postDelayed(this::nextStep,9000);
-                },1100);
-            }
-        },950);
+        // Some Android skins keep the shade open after the first toggle;
+        // others close it. Check the active window before opening it again.
+        AccessibilityNodeInfo root=getRootInActiveWindow();
+        AccessibilityNodeInfo visible=root==null?null:findAirplane(root);
+        if(visible!=null)visible.recycle();
+        if(root!=null)root.recycle();
+        if(visible!=null){
+            h.postDelayed(()->clickAirplane(toOn),180);
+        }else{
+            performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS);
+            h.postDelayed(()->clickAirplane(toOn),1100);
+        }
+    }
+    private void clickAirplane(boolean toOn){
+        if(!playing)return;
+        AccessibilityNodeInfo root=getRootInActiveWindow();
+        if(root==null){
+            fail("Не открылась панель быстрых настроек");return;
+        }
+        AccessibilityNodeInfo tile=findAirplane(root);
+        if(tile==null){
+            root.recycle();
+            fail("Кнопка «Авиарежим» не найдена. Проверьте подключение вручную.");
+            return;
+        }
+        boolean clicked=clickParent(tile);
+        tile.recycle();root.recycle();
+        if(!clicked){
+            fail("Не получилось переключить авиарежим");return;
+        }
+        if(toOn){
+            h.postDelayed(()->rotateAirplane(false),2300);
+        }else{
+            h.postDelayed(()->{
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                state="Ожидание мобильной сети (9 с; новый IP не гарантирован)…";
+                showOverlay();h.postDelayed(this::nextStep,9000);
+            },900);
+        }
     }
     private AccessibilityNodeInfo findAirplane(AccessibilityNodeInfo root){
         ArrayDeque<AccessibilityNodeInfo> q=new ArrayDeque<>();
@@ -309,9 +328,9 @@ public class MacroAccessibilityService extends AccessibilityService {
             });overlay.addView(record,new LinearLayout.LayoutParams(85,85));
             Button run=new Button(this);run.setText("▶");run.setOnClickListener(v->{
                 if(!playing)beginPlay();
-            });overlay.addView(run,new LinearLayout.LayoutParams(85,85));
+            });overlay.addView(run,new LinearLayout.LayoutParams(touchSize,touchSize));
             Button stop=new Button(this);stop.setText("■");
-            stop.setOnClickListener(v->stopAll());overlay.addView(stop,new LinearLayout.LayoutParams(85,85));
+            stop.setOnClickListener(v->stopAll());overlay.addView(stop,new LinearLayout.LayoutParams(touchSize,touchSize));
             overlayParams=new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
