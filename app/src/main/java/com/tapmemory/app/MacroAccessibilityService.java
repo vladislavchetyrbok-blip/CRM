@@ -89,7 +89,11 @@ public class MacroAccessibilityService extends AccessibilityService {
     }
     public void beginRecord(){
         stopAll(); MacroStore.save(this,new JSONArray());
-        beginAppendRecord();\n    }\n    public void beginAppendRecord(){\n        stopAll();\n        recording=true;lastRecorded=0;lastScroll=0;lastX=-1;lastY=-1;
+        beginAppendRecord();
+    }
+    public void beginAppendRecord(){
+        stopAll();
+        recording=true;lastRecorded=0;lastScroll=0;lastX=-1;lastY=-1;
         state="● Запись: перейдите в приложение и нажимайте элементы.";
         showOverlay();
     }
@@ -178,15 +182,15 @@ public class MacroAccessibilityService extends AccessibilityService {
         if(node==null)node=findEditable(root);
         boolean ok=false;
         if(node!=null){
-            Bundle data=new Bundle();
-            data.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,text);
-            ok=node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,data);
+            ClipboardManager cm=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+            if(cm!=null){
+                cm.setPrimaryClip(ClipData.newPlainText("TapMemory",text));
+                ok=node.performAction(AccessibilityNodeInfo.ACTION_PASTE);
+            }
             if(!ok){
-                ClipboardManager cm=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
-                if(cm!=null){
-                    cm.setPrimaryClip(ClipData.newPlainText("TapMemory",text));
-                    ok=node.performAction(AccessibilityNodeInfo.ACTION_PASTE);
-                }
+                Bundle data=new Bundle();
+                data.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,text);
+                ok=node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,data);
             }
             node.recycle();
         }
